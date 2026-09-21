@@ -109,32 +109,32 @@ function script.update(ffb, dt)
 
     -- 1. DRIVELINE MACRO-JUDDER (8 - 14 Hz Resonant Torsional Mode)
     if isSlipping and gainJudder > 0.001 then
-      local judderFreq = 9.0 + 4.0 * clamp(windupNm / maxTorque, 0.0, 1.0)
+      local judderFreq = 9.0 + 3.0 * clamp(windupNm / maxTorque, 0.0, 1.0)
       judderPhase = (judderPhase + judderFreq * dt) % 1.0
 
-      local slipEnvelope = smoothstep(40.0, 200.0, slipRpm) * smoothstep(1400.0, 500.0, slipRpm)
-      local loadEnvelope = clamp(windupNm / (maxTorque * 0.35), 0.25, 1.6)
-      local inclineEnvelope = clamp(1.0 - gLongitudinal * 0.9, 0.75, 1.85) -- Stronger when climbing
-      local glazeEnvelope = 1.0 + glazeFactor * 0.75 -- Glazed clutch judders aggressively
+      local slipEnvelope = smoothstep(30.0, 160.0, slipRpm) * smoothstep(1200.0, 450.0, slipRpm)
+      local loadEnvelope = clamp(windupNm / (maxTorque * 0.35), 0.20, 1.3)
+      local inclineEnvelope = clamp(1.0 - gLongitudinal * 0.5, 0.8, 1.3)
+      local glazeEnvelope = 1.0 + glazeFactor * 0.4
 
       local pRad = judderPhase * 2.0 * math.pi
-      local judderWave = sgn(math.sin(pRad)) * math.pow(math.abs(math.sin(pRad)), 0.75)
-      extraForce = extraForce + (judderWave * slipEnvelope * loadEnvelope * inclineEnvelope * glazeEnvelope * 0.30 * gainJudder)
+      local judderWave = math.sin(pRad)
+      extraForce = extraForce + (judderWave * slipEnvelope * loadEnvelope * inclineEnvelope * glazeEnvelope * 0.035 * gainJudder)
     else
       judderPhase = 0.0
     end
 
     -- 2. FRICTION MICRO-CHATTER (25 - 45 Hz High-Frequency Bite Zone Texture)
     if isSlipping and slipRpm > 8.0 and gainChatter > 0.001 then
-      local chatterFreq = clamp(25.0 + 20.0 * (slipRpm / 1400.0), 25.0, 45.0)
+      local chatterFreq = clamp(25.0 + 15.0 * (slipRpm / 1200.0), 25.0, 40.0)
       chatterPhase = (chatterPhase + chatterFreq * dt) % 1.0
 
-      local normalClamp = engagement * (1.0 - glazeFactor * 0.35)
-      local velocityWeight = slipRpm / (slipRpm + 350.0)
-      local tactileGrit = (math.random() - 0.5) * 0.28
-      local chatterWave = math.sin(chatterPhase * 2.0 * math.pi) + tactileGrit
+      local normalClamp = engagement * (1.0 - glazeFactor * 0.25)
+      local velocityWeight = slipRpm / (slipRpm + 300.0)
+      local tactileGrit = (math.random() - 0.5) * 0.15
+      local chatterWave = 0.85 * math.sin(chatterPhase * 2.0 * math.pi) + tactileGrit
 
-      extraForce = extraForce + (chatterWave * normalClamp * velocityWeight * 0.18 * gainChatter)
+      extraForce = extraForce + (chatterWave * normalClamp * velocityWeight * 0.025 * gainChatter)
     else
       chatterPhase = 0.0
     end
@@ -148,41 +148,41 @@ function script.update(ffb, dt)
       combustionPhase = (combustionPhase + firingFreq * dt) % 1.0
       local cp = combustionPhase * 2.0 * math.pi
 
-      local asymmetricStroke = math.sin(cp) + 0.35 * math.sin(2.0 * cp) + 0.12 * math.sin(3.0 * cp)
-      local throttleScalar = 0.25 + 0.75 * throttle
-      extraForce = extraForce + (asymmetricStroke * throttleScalar * engagement * 0.13 * gainCombustion)
+      local wave = 0.80 * math.sin(cp) + 0.20 * math.sin(2.0 * cp)
+      local throttleScalar = 0.20 + 0.60 * throttle
+      extraForce = extraForce + (wave * throttleScalar * engagement * 0.020 * gainCombustion)
     else
       combustionPhase = 0.0
     end
 
     -- 4. PRE-STALL LUGGING BUCKING (5 - 7 Hz) & STALL RECOIL
     if sharedData.isStalling and gainLugging > 0.001 then
-      local luggingFreq = 5.8
+      local luggingFreq = 5.5
       luggingPhase = (luggingPhase + luggingFreq * dt) % 1.0
 
       local stallRpm = sharedData.stallRpm or 520.0
       local lugDeficit = clamp((stallRpm - rpm) / (stallRpm - 200.0), 0.0, 1.0)
       local lp = luggingPhase * 2.0 * math.pi
-      local lugWave = sgn(math.sin(lp)) * math.pow(math.abs(math.sin(lp)), 2.2)
-      extraForce = extraForce + (lugWave * (lugDeficit ^ 1.4) * 0.48 * gainLugging)
+      local lugWave = math.sin(lp)
+      extraForce = extraForce + (lugWave * (lugDeficit ^ 1.2) * 0.040 * gainLugging)
     else
       luggingPhase = 0.0
     end
 
-    -- Recoil Shock Impulse Trigger
+    -- Recoil Shock Impulse Trigger (Fast decaying zero-mean doublet)
     if sharedData.stallRecoilTrigger then
-      recoilTimer = 0.22 -- 220ms underdamped impulse
-      recoilAmplitude = clamp(windupNm / maxTorque, 0.6, 1.4)
+      recoilTimer = 0.16 -- 160ms underdamped impulse
+      recoilAmplitude = clamp(windupNm / maxTorque, 0.4, 1.0)
     end
 
     if recoilTimer > 0.0 then
-      local t = 0.22 - recoilTimer
-      local recoilShock = recoilAmplitude * math.exp(-26.0 * t) * math.sin(62.0 * t) * 0.90 * gainLugging
+      local t = 0.16 - recoilTimer
+      local recoilShock = recoilAmplitude * math.exp(-28.0 * t) * math.sin(55.0 * t) * 0.050 * gainLugging
       extraForce = extraForce + recoilShock
       recoilTimer = math.max(0.0, recoilTimer - dt)
     end
 
-    extraForce = extraForce * gainMaster
+    extraForce = extraForce * clamp(gainMaster, 0.0, 1.5)
 
   -- =========================================================================
   -- PATHWAY B: AUTONOMOUS FALLBACK (Runs seamlessly if app is not active)
@@ -192,8 +192,8 @@ function script.update(ffb, dt)
 
     -- Stall pulse detection via rapid RPM drop
     if lastRpmFallback > 350.0 and rpm < 150.0 and gear ~= 0 and clutchPedal > 0.35 then
-      recoilTimer = 0.22
-      recoilAmplitude = 1.0
+      recoilTimer = 0.16
+      recoilAmplitude = 0.8
     end
     lastRpmFallback = rpm
 
@@ -203,7 +203,7 @@ function script.update(ffb, dt)
       combustionPhase = (combustionPhase + firingFreq * dt) % 1.0
       local wave = math.sin(combustionPhase * 2.0 * math.pi)
       local idleAtten = clamp(1.0 - (rpm / 2000.0), 0.10, 1.0)
-      extraForce = extraForce + (wave * (config.idleGain or 0.15) * idleAtten)
+      extraForce = extraForce + (wave * (config.idleGain or 0.15) * idleAtten * 0.020)
     end
 
     -- Bite Zone Chatter
@@ -213,8 +213,8 @@ function script.update(ffb, dt)
       local distFromCenter = math.abs(clutchPedal - 0.46) / 0.26
       local biteFactor = clamp(1.0 - distFromCenter, 0.0, 1.0)
       local smoothBite = biteFactor * biteFactor * (3.0 - 2.0 * biteFactor)
-      local chatterWave = math.sin(chatterPhase * 2.0 * math.pi) + (math.random() - 0.5) * 0.25
-      extraForce = extraForce + (chatterWave * (config.biteGain or 0.55) * smoothBite * 0.35)
+      local chatterWave = math.sin(chatterPhase * 2.0 * math.pi)
+      extraForce = extraForce + (chatterWave * (config.biteGain or 0.55) * smoothBite * 0.025)
     end
 
     -- Pre-stall Lugging
@@ -222,19 +222,22 @@ function script.update(ffb, dt)
       luggingPhase = (luggingPhase + 6.0 * dt) % 1.0
       local lugWave = math.sin(luggingPhase * 2.0 * math.pi)
       local severity = clamp((580.0 - rpm) / 380.0, 0.0, 1.0)
-      extraForce = extraForce + (lugWave * (config.stallGain or 0.70) * severity * 0.42)
+      extraForce = extraForce + (lugWave * (config.stallGain or 0.70) * severity * 0.035)
     end
 
     -- Stall recoil
     if recoilTimer > 0.0 then
-      local t = 0.22 - recoilTimer
-      local recoilShock = recoilAmplitude * math.exp(-26.0 * t) * math.sin(62.0 * t) * 0.85 * (config.stallGain or 0.70)
+      local t = 0.16 - recoilTimer
+      local recoilShock = recoilAmplitude * math.exp(-28.0 * t) * math.sin(55.0 * t) * 0.050
       extraForce = extraForce + recoilShock
       recoilTimer = math.max(0.0, recoilTimer - dt)
     end
   end
 
-  -- Clamped safely to DirectInput boundary [-1.0, 1.0]
+  -- HARD SAFE CLAMP: Max +/- 0.08 (8% FFB) for entry/mid-range wheels (PCYES W270 / Logitech G29)
+  -- Completely protects DC motor from belt slip and optical encoder desynchronization
+  extraForce = clamp(extraForce, -0.08, 0.08)
+
   local finalFFB = clamp(ffb + extraForce, -1.0, 1.0)
   return finalFFB
 end

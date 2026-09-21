@@ -67,6 +67,16 @@ function Drivetrain.calculateReflectedInertia(cfg, gear, carMass)
   return cfg.I_shaft_bare + I_reflected
 end
 
+function Drivetrain.calculateKinematicInputShaftSpeed(cfg, gear, v_veh)
+  local ratio = cfg.gear_ratios[gear] or 0.0
+  if gear == 0 or math.abs(ratio) < 1e-4 then
+    return nil -- Neutral: input shaft is decoupled from road wheels
+  end
+  local i_tot = ratio * cfg.final_drive
+  local omega_wheel = (cfg.wheel_radius > 0.0) and (v_veh / cfg.wheel_radius) or 0.0
+  return omega_wheel * i_tot
+end
+
 -- Road Load Torque (tau_load) reflected back onto the input shaft
 function Drivetrain.calculateRoadLoad(cfg, gear, v_veh, pitchRad, brakeInput, handbrakeInput, omega_t, carMass)
   local m = carMass or cfg.car_mass
@@ -78,8 +88,11 @@ function Drivetrain.calculateRoadLoad(cfg, gear, v_veh, pitchRad, brakeInput, ha
   end
   
   local i_tot = ratio * cfg.final_drive
-  local sgn_v = (v_veh >= 0.0) and 1.0 or -1.0
-  if math.abs(v_veh) < 0.05 then sgn_v = 0.0 end
+  local sgn_v = (v_veh > 0.02) and 1.0 or ((v_veh < -0.02) and -1.0 or 0.0)
+  if sgn_v == 0.0 then
+    -- At standstill, rolling resistance and brakes oppose transmission drive direction
+    sgn_v = (ratio >= 0.0) and 1.0 or -1.0
+  end
   
   -- 1. Aerodynamic drag
   local F_aero = 0.5 * 1.225 * cfg.cd_area * (v_veh * v_veh) * sgn_v
@@ -124,12 +137,12 @@ function Drivetrain.calculateEngineTorque(cfg, omega_e, throttleInput, isIgnitio
   
   -- Throttled combustion torque
   local tps = clamp(throttleInput or 0.0, 0.0, 1.0)
-  local tau_combustion = (0.07 + 0.93 * tps) * wotTorque
+  local tau_combustion = (0.12 + 0.88 * tps) * wotTorque
   
   -- Active Idle Speed Governor (anti-stall closed loop)
-  if rpm < targetIdle and tps < 0.10 then
-    local deficit = (targetIdle - rpm) / targetIdle
-    tau_combustion = tau_combustion + (peakT * 0.45 * clamp(deficit * 2.2, 0.0, 1.0))
+  if rpm < (targetIdle + 80.0) and tps < 0.15 then
+    local deficit = clamp((targetIdle - rpm) / targetIdle, 0.0, 1.0)
+    tau_combustion = tau_combustion + (peakT * 0.40 * clamp(deficit * 2.5, 0.0, 1.0))
   end
   
   -- Starter motor torque assist during cranking
@@ -138,7 +151,7 @@ function Drivetrain.calculateEngineTorque(cfg, omega_e, throttleInput, isIgnitio
   end
   
   -- Parasitic mechanical engine drag (pumping losses + journal bearing friction)
-  local tau_drag = 14.0 + (0.06 * omega_e) + (0.00012 * omega_e * omega_e)
+  local tau_drag = 10.0 + (0.04 * omega_e)
   
   return math.max(0.0, tau_combustion - tau_drag)
 end
