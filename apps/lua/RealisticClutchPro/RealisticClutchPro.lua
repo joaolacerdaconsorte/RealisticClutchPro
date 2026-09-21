@@ -33,25 +33,25 @@ local KEY_I = (ui and ui.KeyIndex and ui.KeyIndex.I) or 73
 local config = ac.storage{
   enabled = true,
   stallEnabled = true,
-  selectedPreset = "standard_road",
+  selectedPreset = "autoescola",
   
   -- Engine & Clutch Parameters
   idleRPM = 850.0,
-  stallRPM = 500.0,
-  clutchBiteCenter = 0.46,
-  clutchBiteWidth = 0.28,
-  clutchTorqueCapacity = 250.0,
+  stallRPM = 540.0,
+  clutchBiteCenter = 0.45,
+  clutchBiteWidth = 0.24,
+  clutchTorqueCapacity = 140.0,
   engineCylinders = 4,
-  flywheelInertia = 0.16,
-  creepTorqueMultiplier = 1.15,
-  shudderIntensity = 1.35,
+  flywheelInertia = 0.13,
+  creepTorqueMultiplier = 1.10,
+  shudderIntensity = 1.65,
   
   -- FFB Haptics & Cabin Tremor
   ffbEnabled = true,
   ffbGain = 1.25,
-  ffbIdleRumble = 0.80,
-  ffbBiteShudder = 1.35,
-  ffbStallJolt = 1.40,
+  ffbIdleRumble = 0.90,
+  ffbBiteShudder = 1.55,
+  ffbStallJolt = 1.30,
   cockpitShakeEnabled = true,
   
   -- Starter & Ignition
@@ -466,15 +466,38 @@ function script.update(dt)
         end)
       end
 
-      -- TREPIDAÇÃO FÍSICA NO PONTO DE FRICÇÃO (Chatter suave nos coxins do chassi)
-      if currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and speedMag < 18.0 and coreState.coupling_ratio > 0.10 then
-        local chatterFreq = 24.0 + (actualRPM * 0.012)
-        local osc = math.sin(chatterTimer * math.pi * 2.0 * chatterFreq)
-        local chatterAmp = clamp(config.shudderIntensity or 1.0, 0.0, 1.5) * coreState.coupling_ratio
-        local forceY = osc * carMass * 0.15 * chatterAmp
-        local forceZ = (osc * 0.4) * carMass * 0.12 * chatterAmp
+      -- TREPIDAÇÃO FÍSICA E VISUAL NO PONTO DE FRICÇÃO (Chassis & Cockpit Camera Shudder)
+      if currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and speedMag < 18.0 and coreState.coupling_ratio > 0.08 then
+        local biteZone = 1.0 - math.min(1.0, math.abs(coreState.coupling_ratio - 0.45) / 0.35)
+        local smoothBite = biteZone * biteZone * (3.0 - 2.0 * biteZone)
+        local shudderGain = clamp(config.shudderIntensity or 1.45, 0.5, 2.5)
+
+        -- Frequência natural de vibração de coxins do motor / subchassi (15.2 Hz)
+        local biteFreq = 15.2
+        local oscY = math.sin(chatterTimer * math.pi * 2.0 * biteFreq)
+        local oscZ = math.sin(chatterTimer * math.pi * 2.0 * biteFreq + 0.75) * 0.5
+
+        -- Força de suspensão (350 N - 550 N): excita os amortecedores e molas, fazendo a tela tremer visivelmente!
+        local forceY = oscY * carMass * 0.45 * (0.35 + 0.65 * smoothBite) * shudderGain
+        local forceZ = oscZ * carMass * 0.30 * (0.35 + 0.65 * smoothBite) * shudderGain
+
+        -- Se estiver em subida, agacha a traseira conforme traciona (controle de embreagem na rampa)
+        if math.abs(pitchDeg) > 1.2 then
+          local squat = math.sin(pitchRad) * carMass * 0.35 * coreState.coupling_ratio
+          forceY = forceY - math.abs(squat)
+        end
+
         pcall(function()
           physics.addForce(0, vec3(0, 0, 0), true, vec3(0, forceY, forceZ), true)
+        end)
+      end
+
+      -- QUEDA AUDÍVEL DE ROTAÇÃO NO PONTO DE EMBREAGEM (ENGINE BOG / SOM PESADO)
+      if rawGas < 0.08 and currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and coreState.coupling_ratio > 0.12 then
+        local droopRpm = clamp(coreState.coupling_ratio * 130.0, 0.0, 140.0)
+        local loadedRpm = math.max((config.stallRPM or 540.0) + 35.0, (config.idleRPM or 850.0) - droopRpm)
+        pcall(function()
+          physics.setEngineRPM(0, loadedRpm)
         end)
       end
     end
@@ -696,25 +719,41 @@ function script.windowMain()
 end
 
 -- ==============================================================================
--- FLOATING HUD OVERLAY WINDOW
+-- FLOATING HUD OVERLAY WINDOW (ASSISTENTE AUTOESCOLA & TELEMETRIA)
 -- ==============================================================================
 function script.windowHud()
   local pt = config.language == "pt"
   local car = ac.getCar(0)
-  local curPedal = car and car.clutch or 0.0
+  local curPedal = car and car.clutch or 1.0
 
-  if not isEngineRunning then
-    ui.textColored(pt and "● MOTOR MORREU!" or "● ENGINE STALLED!", rgbm(1, 0.2, 0.2, 1))
-    ui.text(pt and "Aperte o Botão 1 (X) no volante para ligar." or "Press Button 1 (X) on wheel to start.")
-  elseif coreState.state == Core.STATE_SLIPPING and coreState.coupling_ratio > 0.20 then
-    ui.textColored(pt and "⚠ ZONA DE FRICÇÃO (DESLIZANDO)" or "⚠ CLUTCH SLIPPING", rgbm(1, 0.5, 0.1, 1))
-    ui.text(string.format("Acoplamento: %.0f%% | Torque: %.0f Nm", coreState.coupling_ratio * 100, math.abs(coreState.tau_clutch)))
-  else
-    ui.textColored(pt and "● MOTOR LIGADO (C-PHYSICS)" or "● ENGINE RUNNING", rgbm(0.4, 0.85, 1, 1))
-  end
+  local isNearStall = isEngineRunning and (coreState.state == Core.STATE_SLIPPING) 
+                      and (currentGear ~= 0) and (coreState.coupling_ratio > 0.18)
+                      and (simulatedRPM < (config.stallRPM + 75.0)) and (speedMag < 8.0)
 
-  UI.drawCustomBar(pt and "Embreagem" or "Clutch", 1.0 - curPedal, 1.0, "%.0f%%", rgbm(0.3, 0.65, 0.95, 1), 12)
-  UI.drawCustomBar(pt and "Temp. Disco" or "Disc Temp", coreState.T_disc, 400.0, "%.0f °C", (coreState.T_disc > 220.0 and rgbm(1, 0.3, 0.2, 1) or rgbm(0.4, 0.8, 0.4, 1)), 10)
+  -- Assistente Visual de Ponto de Embreagem (Radar Autoescola)
+  UI.drawBitePointRadar(
+    curPedal, 
+    config.clutchBiteCenter or 0.45, 
+    config.clutchBiteWidth or 0.24, 
+    coreState.coupling_ratio, 
+    (coreState.state == Core.STATE_SLIPPING), 
+    (not isEngineRunning), 
+    isNearStall, 
+    pt
+  )
+
+  -- Telemetria complementar compacta
+  ui.dummy(vec2(0, 2))
+  local gearStr = (currentGear == 0) and "N" or ((currentGear < 0) and "R" or tostring(currentGear))
+  local rpmVal = (car and car.rpm) or simulatedRPM
+  local statusStr = string.format(pt and "Marcha: %s | RPM: %.0f | Vel: %.1f km/h" or "Gear: %s | RPM: %.0f | Speed: %.1f km/h", 
+    gearStr, rpmVal, speedMag * 3.6)
+  ui.textColored(statusStr, rgbm(0.80, 0.85, 0.90, 1))
+
+  local torqueNm = math.abs(coreState.tau_clutch or 0.0)
+  local biteStr = string.format(pt and "Fricção: %.0f%% | Carga: %.0f Nm | Temp: %.0f°C" or "Bite: %.0f%% | Load: %.0f Nm | Temp: %.0f°C", 
+    coreState.coupling_ratio * 100.0, torqueNm, coreState.T_disc or 25.0)
+  ui.textColored(biteStr, rgbm(0.35, 0.75, 0.95, 1))
 end
 
 function script.windowSettings()

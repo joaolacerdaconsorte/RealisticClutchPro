@@ -107,34 +107,39 @@ function script.update(ffb, dt)
 
     local isSlipping = (engagement > 0.06) and (engagement < 0.94) and (gear ~= 0)
 
-    -- 1. DRIVELINE MACRO-JUDDER (8 - 14 Hz Resonant Torsional Mode)
+    -- 1. DRIVELINE MACRO-JUDDER & BITE ZONE RESONANCE (14 - 17 Hz Resonant Mode)
     if isSlipping and gainJudder > 0.001 then
-      local judderFreq = 9.0 + 3.0 * clamp(windupNm / maxTorque, 0.0, 1.0)
-      judderPhase = (judderPhase + judderFreq * dt) % 1.0
+      local biteCenter = sharedData.clutchBitePosition or 0.45
+      local distFromBite = math.abs(engagement - biteCenter) / 0.32
+      local biteZone = clamp(1.0 - distFromBite, 0.0, 1.0)
+      local smoothBite = biteZone * biteZone * (3.0 - 2.0 * biteZone)
 
-      local slipEnvelope = smoothstep(30.0, 160.0, slipRpm) * smoothstep(1200.0, 450.0, slipRpm)
-      local loadEnvelope = clamp(windupNm / (maxTorque * 0.35), 0.20, 1.3)
-      local inclineEnvelope = clamp(1.0 - gLongitudinal * 0.5, 0.8, 1.3)
-      local glazeEnvelope = 1.0 + glazeFactor * 0.4
+      -- Frequência tátil de máxima percepção para motores de volante (15.5 Hz)
+      local biteFreq = 15.5
+      judderPhase = (judderPhase + biteFreq * dt) % 1.0
 
-      local pRad = judderPhase * 2.0 * math.pi
-      local judderWave = math.sin(pRad)
-      extraForce = extraForce + (judderWave * slipEnvelope * loadEnvelope * inclineEnvelope * glazeEnvelope * 0.035 * gainJudder)
+      local slipWeight = clamp(slipRpm / 120.0, 0.35, 1.0)
+      local judderWave = math.sin(judderPhase * 2.0 * math.pi)
+
+      -- Amplitude sólida de até 0.068 (6.8% FFB) no ápice do ponto de embreagem:
+      -- Sensível e nítido nas mãos sem causar desvio de esterçamento (média rigorosamente nula)
+      local biteHaptic = judderWave * (0.035 + 0.033 * smoothBite) * slipWeight * gainJudder
+      extraForce = extraForce + biteHaptic
     else
       judderPhase = 0.0
     end
 
-    -- 2. FRICTION MICRO-CHATTER (25 - 45 Hz High-Frequency Bite Zone Texture)
-    if isSlipping and slipRpm > 8.0 and gainChatter > 0.001 then
-      local chatterFreq = clamp(25.0 + 15.0 * (slipRpm / 1200.0), 25.0, 40.0)
+    -- 2. FRICTION MICRO-CHATTER (20 - 32 Hz High-Frequency Bite Zone Texture)
+    if isSlipping and slipRpm > 10.0 and gainChatter > 0.001 then
+      local chatterFreq = clamp(20.0 + 10.0 * (slipRpm / 1200.0), 20.0, 30.0)
       chatterPhase = (chatterPhase + chatterFreq * dt) % 1.0
 
       local normalClamp = engagement * (1.0 - glazeFactor * 0.25)
       local velocityWeight = slipRpm / (slipRpm + 300.0)
-      local tactileGrit = (math.random() - 0.5) * 0.15
+      local tactileGrit = (math.random() - 0.5) * 0.12
       local chatterWave = 0.85 * math.sin(chatterPhase * 2.0 * math.pi) + tactileGrit
 
-      extraForce = extraForce + (chatterWave * normalClamp * velocityWeight * 0.025 * gainChatter)
+      extraForce = extraForce + (chatterWave * normalClamp * velocityWeight * 0.018 * gainChatter)
     else
       chatterPhase = 0.0
     end
@@ -206,15 +211,15 @@ function script.update(ffb, dt)
       extraForce = extraForce + (wave * (config.idleGain or 0.15) * idleAtten * 0.020)
     end
 
-    -- Bite Zone Chatter
-    if gear ~= 0 and clutchPedal > 0.22 and clutchPedal < 0.78 and rpm > 250.0 and speedKmh < 22.0 then
-      local chatterFreq = 26.0 + (rpm * 0.012)
-      chatterPhase = (chatterPhase + chatterFreq * dt) % 1.0
-      local distFromCenter = math.abs(clutchPedal - 0.46) / 0.26
+    -- Bite Zone Chatter & Tactile Resonance (15.5 Hz)
+    if gear ~= 0 and clutchPedal > 0.18 and clutchPedal < 0.82 and rpm > 220.0 and speedKmh < 24.0 then
+      local biteFreq = 15.5
+      chatterPhase = (chatterPhase + biteFreq * dt) % 1.0
+      local distFromCenter = math.abs(clutchPedal - 0.48) / 0.30
       local biteFactor = clamp(1.0 - distFromCenter, 0.0, 1.0)
       local smoothBite = biteFactor * biteFactor * (3.0 - 2.0 * biteFactor)
       local chatterWave = math.sin(chatterPhase * 2.0 * math.pi)
-      extraForce = extraForce + (chatterWave * (config.biteGain or 0.55) * smoothBite * 0.025)
+      extraForce = extraForce + (chatterWave * (config.biteGain or 1.0) * (0.035 + 0.033 * smoothBite))
     end
 
     -- Pre-stall Lugging

@@ -11,6 +11,28 @@ local Presets = {}
 
 Presets.list = {
   {
+    id = "autoescola",
+    name = "★ Autoescola Brasil (1.0L Popular - Mobi / Gol / Onix / HB20)",
+    desc = "Calibração idêntica ao carro da autoescola: motor 1.0 aspirado, ponto de embreagem a 45% com tremor nítido no volante e na tela, arrancada em marcha lenta e controle de rampa.",
+    config = {
+      idleRPM = 850.0,
+      stallRPM = 540.0,
+      clutchBiteCenter = 0.45,
+      clutchBiteWidth = 0.24,
+      biteAggressiveness = 2,
+      clutchTorqueCapacity = 140.0,
+      engineCylinders = 4,
+      flywheelInertia = 0.13, -- Volante leve: afoga se soltar de vez, mas sai no plano se dosar no ponto
+      creepTorqueMultiplier = 1.10,
+      shudderIntensity = 1.65, -- Tremor visual e físico na tela acentuado para aprendizado
+      ffbIdleRumble = 0.90,
+      ffbBiteShudder = 1.55,  -- Vibração tátil no volante no ponto exato (15.5 Hz)
+      ffbStallJolt = 1.30,
+      allowStarterInGear = true,
+      crankTimeToStart = 0.35
+    }
+  },
+  {
     id = "city_compact",
     name = "Compacto / Urbano (Fiat 500 / Uno / Gol / Ka / 1.0L - 1.4L)",
     desc = "Volante de inércia leve, torque modesto em baixa rotação. Anda devagar no plano se soltar com carinho, mas morre na subida sem acelerador.",
@@ -128,12 +150,12 @@ function Presets.getById(id)
       return p
     end
   end
-  return Presets.list[2] -- Default to standard road
+  return Presets.list[1] -- Default to Autoescola Brasil
 end
 
 -- Detecção Inteligente Automática para qualquer carro no jogo
 function Presets.detectForCar(car)
-  if not car then return Presets.list[2] end
+  if not car then return Presets.list[1] end
 
   local carName = ""
   pcall(function()
@@ -148,14 +170,14 @@ function Presets.detectForCar(car)
   if string.find(carName, "gt3") or string.find(carName, "gt4") or string.find(carName, "cup") 
      or string.find(carName, "race") or string.find(carName, "formula") or string.find(carName, "drift") 
      or string.find(carName, "f1") or string.find(carName, "soper") then
-    return Presets.list[5]
+    return Presets.list[6]
   end
 
   -- 2. Carros Turbodiesel / Pickups / Vans
   if string.find(carName, "diesel") or string.find(carName, "tdi") or string.find(carName, "dci") 
      or string.find(carName, "hilux") or string.find(carName, "ranger") or string.find(carName, "amarok") 
      or string.find(carName, "transit") or string.find(carName, "iveco") then
-    return Presets.list[3]
+    return Presets.list[4]
   end
 
   -- 3. Superesportivos / Muscle / V6 / V8
@@ -163,21 +185,23 @@ function Presets.detectForCar(car)
      or string.find(carName, "m3") or string.find(carName, "m4") or string.find(carName, "m5") 
      or string.find(carName, "amg") or string.find(carName, "corvette") or string.find(carName, "mustang") 
      or string.find(carName, "supra") or string.find(carName, "gtr") or string.find(carName, "viper") then
-    return Presets.list[4]
+    return Presets.list[5]
   end
 
-  -- 4. Compactos / Urbanos (Fiat 500, Uno, Gol, Ka, Mini, Miata, Corsa, etc.)
-  if string.find(carName, "500") or string.find(carName, "abarth") or string.find(carName, "fiat") 
-     or string.find(carName, "uno") or string.find(carName, "gol") or string.find(carName, "ka") 
-     or string.find(carName, "corsa") or string.find(carName, "clio") or string.find(carName, "polo") 
-     or string.find(carName, "up") or string.find(carName, "c1") or string.find(carName, "aygo") 
-     or string.find(carName, "yaris") or string.find(carName, "206") or string.find(carName, "208") 
-     or mass < 1080.0 then
+  -- 4. Autoescola Brasil & Compactos Populares (Mobi, Onix, Gol, HB20, Uno, Palio, Kwid, 500, Abarth, Ka, Corsa, etc.)
+  if string.find(carName, "mobi") or string.find(carName, "onix") or string.find(carName, "hb20")
+     or string.find(carName, "kwid") or string.find(carName, "gol") or string.find(carName, "uno")
+     or string.find(carName, "palio") or string.find(carName, "siena") or string.find(carName, "etios")
+     or string.find(carName, "500") or string.find(carName, "abarth") or string.find(carName, "fiat") 
+     or string.find(carName, "ka") or string.find(carName, "corsa") or string.find(carName, "clio") 
+     or string.find(carName, "polo") or string.find(carName, "up") or string.find(carName, "c1") 
+     or string.find(carName, "aygo") or string.find(carName, "yaris") or string.find(carName, "206") 
+     or string.find(carName, "208") or mass < 1120.0 then
     return Presets.list[1]
   end
 
   -- 5. Carro de Rua Padrão (Fiesta, Focus, Golf, Civic, Astra, Cruze, etc.)
-  return Presets.list[2]
+  return Presets.list[3]
 end
 
 return Presets
