@@ -19,6 +19,11 @@ local FFB = require('ffb_engine')
 local Presets = require('presets')
 local Audio = require('audio_engine')
 local UI = require('ui_components')
+local sharedDef = require('clutch_shared_struct')
+local sharedData = nil
+pcall(function()
+  sharedData = ac.connect(sharedDef.LAYOUT, true, ac.SharedNamespace.Shared)
+end)
 
 -- Key Codes for CSP Lua
 local KEY_E = (ui and ui.KeyIndex and ui.KeyIndex.E) or 69
@@ -304,6 +309,22 @@ function script.update(dt)
     end
   end
 
+  -- 5b. Pegar no Tranco (Realistic Bump Start)
+  -- Se o motor estiver apagado com ignição ligada, carro em movimento e engrenado, soltar a embreagem dá partida
+  if not isEngineRunning and isIgnitionOn and currentGear ~= 0 and acClutch > 0.40 and speedMag > 10.0 then
+    if simulatedRPM > (config.stallRPM or 500.0) then
+      isEngineRunning = true
+      stallCooldown = 2.0
+      stallReason = ""
+      pcall(function()
+        physics.setEngineRPM(0, simulatedRPM)
+        ac.overrideGasInput(math.huge)
+        local bumpDir = (currentGear < 0) and 1.0 or -1.0
+        physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, bumpDir * carMass * 2.2), true)
+      end)
+    end
+  end
+
   -- 6. Injeção Direta em Baixo Nível no CSP (C-Physics Engine Hooks)
   if ac.overrideSpecificValue and ac.CarPhysicsValueID then
     pcall(function()
@@ -324,6 +345,31 @@ function script.update(dt)
     pcall(function()
       ac.overrideEngineTorque(isEngineRunning and tau_combustion or 0.0)
     end)
+  end
+
+  -- 6b. Publicação de Telemetria de Baixíssima Latência via IPC (ac.connect @ 333 Hz)
+  if sharedData then
+    sharedData.heartbeat = os.clock()
+    sharedData.appActive = true
+    sharedData.cylinderCount = config.engineCylinders or 4
+    sharedData.idleRpm = config.idleRPM
+    sharedData.stallRpm = config.stallRPM
+    sharedData.maxTorqueNm = config.clutchTorqueCapacity
+    sharedData.clutchBitePosition = config.clutchBiteCenter
+    sharedData.clutchEngagement = coreState.coupling_ratio
+    sharedData.clutchSlipRpm = (coreState.omega_e - coreState.omega_t) * 9.549296
+    sharedData.clutchTorqueNm = coreState.tau_clutch
+    sharedData.clutchTemperatureC = coreState.T_disc
+    sharedData.clutchGlazeFactor = coreState.glaze_factor or 0.0
+    sharedData.drivelineWindupNm = math.abs(coreState.tau_clutch)
+    sharedData.isStalling = (not isEngineRunning and stallShockTimer > 0.0) or 
+                           (coreState.state == Core.STATE_SLIPPING and simulatedRPM < (config.stallRPM + 75.0) and currentGear ~= 0 and actualRPM > 120.0)
+    sharedData.stallRecoilTrigger = (stallShockTimer > 0.35)
+    sharedData.gainMaster = config.ffbGain
+    sharedData.gainJudder = config.ffbBiteShudder
+    sharedData.gainChatter = config.shudderIntensity
+    sharedData.gainCombustion = config.ffbIdleRumble
+    sharedData.gainLugging = config.ffbStallJolt
   end
 
   -- 7. Controle Universal de Carro (Garante 100% de compatibilidade com qualquer carro)
