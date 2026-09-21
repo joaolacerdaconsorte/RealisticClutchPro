@@ -79,6 +79,7 @@ local autoDetected = false
 
 -- State Flags
 local isEngineRunning = true
+local lastEngineRunningState = true
 local isIgnitionOn = true
 local isStarting = false
 local starterTimer = 0.0
@@ -363,20 +364,23 @@ function script.update(dt)
       -- Desativa o sincronizador simplificado da Kunos para permitir deslizamento suave contínuo
       ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainOpenThreshold, 0.0)
       
-      -- Em estol, dispara o corte de ignição via ciclos de física
+      -- Em estol, dispara o corte de ignição via ciclos de física; quando ligado, garante 0 ciclos de corte
       if not isEngineRunning then
         ac.overrideSpecificValue(ac.CarPhysicsValueID.EngineLimiterCycles, 100)
+      else
+        ac.overrideSpecificValue(ac.CarPhysicsValueID.EngineLimiterCycles, 0)
       end
     end)
   end
 
-  -- Injeta corte de torque em estol ou restaura o motor nativo da Kunos
+  -- Injeta corte de torque no motor APENAS em estol
   if ac.overrideEngineTorque then
     pcall(function()
       if not isEngineRunning then
         ac.overrideEngineTorque(0.0)
-      else
-        ac.overrideEngineTorque(math.huge)
+      elseif not lastEngineRunningState then
+        -- Transição de estol para ligado: restaura a curva nativa passando NaN (0/0) conforme documentado no CSP SDK
+        ac.overrideEngineTorque(0.0 / 0.0)
       end
     end)
   end
@@ -413,7 +417,6 @@ function script.update(dt)
       activeControls.gas = 0.0
       pcall(function()
         physics.setEngineRPM(0, 0.0)
-        ac.overrideGasInput(0.0)
       end)
 
       -- TRANCO FÍSICO SUAVE AO MORRER O MOTOR (Centralizado no CG para não desalinhar volante)
@@ -428,7 +431,6 @@ function script.update(dt)
     elseif starterActive or isStarting then
       pcall(function()
         physics.setEngineRPM(0, config.idleRPM + 250.0)
-        ac.overrideGasInput(math.huge)
       end)
       -- Tranco de arranque engrenado
       if currentGear ~= 0 and coreState.coupling_ratio > 0.45 then
@@ -438,23 +440,15 @@ function script.update(dt)
         end)
       end
     else
-      -- Motor em funcionamento normal
-      pcall(function()
-        ac.overrideGasInput(math.huge)
-      end)
-
-      -- ECU Idle Governor: Marcha lenta estável no neutro
-      local isFreewheel = (currentGear == 0) or (acClutch < 0.25)
-      if isFreewheel and rawGas < 0.08 and actualRPM < config.idleRPM then
-        pcall(function()
-          physics.setEngineRPM(0, config.idleRPM)
-        end)
-      end
+      -- Motor em funcionamento normal:
+      -- activeControls.gas deve ser SEMPRE 0.0 para que o CSP use estritamente max(pedal_real, 0.0) = pedal_real!
+      -- Isso garante aceleração 100% direta, linear e sem acelerador fantasma ou travado.
+      activeControls.gas = 0.0
 
       -- CREEP DE MARCHA LENTA NO PLANO (Arrancada suave ao soltar a embreagem sem acelerar)
       local isCreepEligible = (currentGear == 1 or currentGear == -1)
                               and (rawBrake < 0.08 and rawHandbrake < 0.08)
-                              and (rawGas < 0.08)
+                              and (rawGas < 0.05)
                               and (acClutch > 0.35 or coreState.coupling_ratio > 0.08)
                               and (speedMag < 8.5)
                               and (math.abs(pitchDeg) < 2.5)
@@ -464,12 +458,8 @@ function script.update(dt)
         -- Governador de velocidade: empurra suavemente até atingir a velocidade de marcha lenta (~7.2 - 7.6 km/h)
         local speedGovernor = clamp((8.2 - speedMag) / 8.2, 0.0, 1.0)
         local engagementFactor = clamp(coreState.coupling_ratio * 1.5, 0.15, 1.0)
-        
-        -- Injeção de aceleração virtual da ECU (IAC - Idle Air Control)
-        local idleThrottle = clamp(0.04 + 0.10 * engagementFactor * speedGovernor, 0.02, 0.16)
-        activeControls.gas = idleThrottle
 
-        -- Força tratória das rodas motrizes (Newton: ~1600 - 2000 N)
+        -- Força tratória das rodas motrizes (Newton: ~1600 - 2000 N gerados pelo acoplamento mecânico)
         local creepTractiveForce = creepDir * carMass * 1.65 * engagementFactor * speedGovernor * (config.creepTorqueMultiplier or 1.0)
         pcall(function()
           physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, creepTractiveForce), true)
@@ -526,6 +516,8 @@ function script.update(dt)
     clutchEngagement = coreState.coupling_ratio,
     engineBogState = (coreState.state == Core.STATE_SLIPPING and coreState.coupling_ratio or 0.0)
   }, config, car, dt)
+
+  lastEngineRunningState = isEngineRunning
 end
 
 -- ==============================================================================
