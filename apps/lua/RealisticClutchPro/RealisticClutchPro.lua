@@ -148,11 +148,55 @@ local function applyPreset(presetId)
   end
 end
 
+local wasEnabled = true
+
+local function restoreVanillaPhysics()
+  pcall(function()
+    if ac.overrideSpecificValue and ac.CarPhysicsValueID then
+      ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainClutchOverride, 0.0 / 0.0)
+      ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainOpenThreshold, 0.0 / 0.0)
+      ac.overrideSpecificValue(ac.CarPhysicsValueID.EngineLimiterCycles, 0)
+    end
+    if ac.overrideEngineTorque then
+      ac.overrideEngineTorque(0.0 / 0.0)
+    end
+    local activeControls = ac.overrideCarControls(0)
+    if activeControls then
+      activeControls.gas = 0.0
+    end
+  end)
+  if sharedData then
+    sharedData.heartbeat = os.clock()
+    sharedData.appActive = false
+    sharedData.clutchEngagement = 1.0
+    sharedData.clutchSlipRpm = 0.0
+    sharedData.isStalling = false
+    sharedData.stallRecoilTrigger = false
+    sharedData.gainMaster = 0.0
+  end
+  isEngineRunning = true
+  isIgnitionOn = true
+  isStarting = false
+  stallShockTimer = 0.0
+  cockpitShake = vec2(0, 0)
+end
+
 -- ==============================================================================
 -- MAIN SCRIPT UPDATE LOOP (Runs at frame rate with sub-stepping capability)
 -- ==============================================================================
 function script.update(dt)
-  if not config.enabled then return end
+  if not config.enabled then
+    if wasEnabled then
+      restoreVanillaPhysics()
+      wasEnabled = false
+    end
+    if sharedData then
+      sharedData.heartbeat = os.clock()
+      sharedData.appActive = false
+    end
+    return
+  end
+  wasEnabled = true
   
   local car = ac.getCar(0)
   if not car then return end
@@ -556,13 +600,29 @@ function script.windowMain()
   end
 
   -- Header
-  ui.textHeading("Realistic Clutch Pro v4.0 (C-Physics Low-Level)")
+  ui.textHeading("Realistic Clutch Pro v4.3 (Autoescola Edition)")
   ui.sameLine(ui.availableSpaceX() - 85)
   if ui.button(pt and "EN" or "PT", vec2(75, 22)) then
     config.language = (config.language == "pt") and "en" or "pt"
   end
   
   ui.separator()
+
+  -- Master Botão Liga / Desliga (Ativa ou desativa o mod a qualquer momento)
+  local btnW = ui.availableSpaceX()
+  if config.enabled then
+    if ui.button(pt and "🟢 MOD ATIVADO (CLIQUE PARA DESATIVAR)" or "🟢 MOD ENABLED (CLICK TO DISABLE)", vec2(btnW, 32)) then
+      config.enabled = false
+      restoreVanillaPhysics()
+    end
+  else
+    if ui.button(pt and "🔴 MOD DESATIVADO (CLIQUE PARA ATIVAR)" or "🔴 MOD DISABLED (CLICK TO ENABLE)", vec2(btnW, 32)) then
+      config.enabled = true
+      isEngineRunning = true
+      isIgnitionOn = true
+    end
+  end
+  ui.dummy(vec2(0, 4))
 
   -- Engine State Badge
   local p = ui.getCursor()
@@ -572,7 +632,10 @@ function script.windowMain()
   local stateCol = rgbm(0.18, 0.72, 0.28, 0.95)
   local stateText = pt and "MOTOR LIGADO (C-PHYSICS ATIVO)" or "ENGINE RUNNING (C-PHYSICS ACTIVE)"
   
-  if isStarting then
+  if not config.enabled then
+    stateCol = rgbm(0.35, 0.40, 0.45, 0.95)
+    stateText = pt and "MOD DESATIVADO (FÍSICA ORIGINAL DO ASSETTO CORSA)" or "MOD DISABLED (VANILLA AC PHYSICS ACTIVE)"
+  elseif isStarting then
     stateCol = rgbm(0.95, 0.60, 0.10, 0.95)
     stateText = pt and "DANDO PARTIDA (BOTÃO 1 / X)..." or "CRANKING (BUTTON 1 / X)..."
   elseif not isIgnitionOn then
@@ -650,6 +713,15 @@ function script.windowMain()
     ui.text(pt and "Calibração Fina da Embreagem & Inércia:" or "Fine Clutch & Inertia Calibration:")
     ui.separator()
 
+    local prevEnabled = config.enabled
+    config.enabled = ui.checkbox(pt and "Ativar Simulação do Mod (Master Switch)" or "Enable Mod Simulation (Master Switch)", config.enabled)
+    if prevEnabled and not config.enabled then
+      restoreVanillaPhysics()
+    elseif not prevEnabled and config.enabled then
+      isEngineRunning = true
+      isIgnitionOn = true
+    end
+
     config.stallEnabled = ui.checkbox(pt and "Ativar Mecânica de Motor Morrer (Engine Stall)" or "Enable Engine Stall Mechanics", config.stallEnabled)
     
     ui.dummy(vec2(0, 4))
@@ -724,6 +796,26 @@ end
 function script.windowHud()
   local pt = config.language == "pt"
   local car = ac.getCar(0)
+
+  -- Botão Rápido Liga/Desliga no HUD (Permite desativar sem abrir o menu principal)
+  local btnW = ui.availableSpaceX()
+  if config.enabled then
+    if ui.button(pt and "🟢 MOD ATIVADO [CLIQUE P/ DESATIVAR]" or "🟢 MOD ON [CLICK TO DISABLE]", vec2(btnW, 22)) then
+      config.enabled = false
+      restoreVanillaPhysics()
+    end
+  else
+    if ui.button(pt and "🔴 MOD DESATIVADO [CLIQUE P/ ATIVAR]" or "🔴 MOD OFF [CLICK TO ENABLE]", vec2(btnW, 22)) then
+      config.enabled = true
+      isEngineRunning = true
+      isIgnitionOn = true
+    end
+    ui.dummy(vec2(0, 4))
+    ui.textColored(pt and "⏸ SIMULAÇÃO DESATIVADA" or "⏸ MOD DISABLED", rgbm(0.9, 0.9, 0.9, 1))
+    ui.textColored(pt and "Física original do Assetto Corsa ativa." or "Original Assetto Corsa physics active.", rgbm(0.6, 0.65, 0.7, 1))
+    return
+  end
+
   local curPedal = car and car.clutch or 1.0
 
   local isNearStall = isEngineRunning and (coreState.state == Core.STATE_SLIPPING) 
@@ -757,8 +849,15 @@ function script.windowHud()
 end
 
 function script.windowSettings()
-  ui.text("Realistic Clutch Pro v4.0 - Settings")
+  ui.text("Realistic Clutch Pro v4.3 - Settings")
   ui.separator()
+  local prevEnabled = config.enabled
   config.enabled = ui.checkbox("Enable Mod Simulation", config.enabled)
+  if prevEnabled and not config.enabled then
+    restoreVanillaPhysics()
+  elseif not prevEnabled and config.enabled then
+    isEngineRunning = true
+    isIgnitionOn = true
+  end
   config.cockpitShakeEnabled = ui.checkbox("Enable Cockpit Screen Tremor", config.cockpitShakeEnabled)
 end

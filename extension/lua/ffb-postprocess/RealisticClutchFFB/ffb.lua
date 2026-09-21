@@ -79,6 +79,14 @@ function script.update(ffb, dt)
   local gLongitudinal = (vehiclePR and vehiclePR.gForces and vehiclePR.gForces.z) or 0.0
   local speedKmh = math.abs(car.speedKmh or 0.0)
 
+  -- Se o app estiver rodando mas o usuário desativou a simulação na UI, desativa o FFB do mod imediatamente
+  if sharedData and not sharedData.appActive then
+    local now = os.clock()
+    if (now - sharedData.heartbeat) < 2.0 then
+      return ffb
+    end
+  end
+
   local hasSharedIPC = false
   if sharedData and sharedData.appActive then
     local now = os.clock()
