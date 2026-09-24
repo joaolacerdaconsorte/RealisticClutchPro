@@ -615,6 +615,12 @@ end
 local selectedTab = 1
 
 function script.windowMain()
+  pcall(function()
+    if ui.windowWidth and (ui.windowWidth() < 300 or ui.windowHeight() < 300) then
+      ui.setWindowSize(vec2(460, 620))
+    end
+  end)
+
   local pt = config.language == "pt"
   
   if config.cockpitShakeEnabled and (cockpitShake.x ~= 0 or cockpitShake.y ~= 0) then
