@@ -636,7 +636,11 @@ function script.windowMain()
   end
 
   -- Header
-  ui.textHeading("Realistic Clutch Pro v4.3 (Autoescola Edition)")
+  if ui.header then
+    ui.header("Realistic Clutch Pro v4.3 (Autoescola Edition)")
+  else
+    ui.textColored("Realistic Clutch Pro v4.3 (Autoescola Edition)", rgbm(1, 1, 1, 1))
+  end
   ui.sameLine(ui.availableSpaceX() - 85)
   if ui.button(pt and "EN" or "PT", vec2(75, 22)) then
     config.language = (config.language == "pt") and "en" or "pt"
@@ -903,15 +907,24 @@ function script.windowHud()
 end
 
 function script.windowSettings()
+  local pt = config.language == "pt"
   ui.text("Realistic Clutch Pro v4.3 - Settings")
   ui.separator()
   local prevEnabled = config.enabled
-  config.enabled = ui.checkbox("Enable Mod Simulation", config.enabled)
+  config.enabled = ui.checkbox(pt and "Ativar Simulação do Mod" or "Enable Mod Simulation", config.enabled)
   if prevEnabled and not config.enabled then
     restoreVanillaPhysics()
   elseif not prevEnabled and config.enabled then
     isEngineRunning = true
     isIgnitionOn = true
+    isStarting = false
+    stallCooldown = 3.0
+    stallShockTimer = 0.0
+    stallReason = ""
+    local car = ac.getCar(0)
+    local curRpm = (car and car.rpm and car.rpm > 200.0) and car.rpm or (config.idleRPM or 850.0)
+    coreState.omega_e = curRpm * 0.10472
+    coreState.state = Core.STATE_LOCKED
   end
-  config.cockpitShakeEnabled = ui.checkbox("Enable Cockpit Screen Tremor", config.cockpitShakeEnabled)
+  config.cockpitShakeEnabled = ui.checkbox(pt and "Ativar Tremor Visual na Tela" or "Enable Cockpit Screen Tremor", config.cockpitShakeEnabled)
 end
