@@ -196,10 +196,23 @@ function script.update(dt)
     end
     return
   end
-  wasEnabled = true
   
   local car = ac.getCar(0)
   if not car then return end
+
+  if not wasEnabled then
+    -- Transição imediata de Desativado para Ativado: sincroniza rotação com o motor do AC e previne estol falso
+    isEngineRunning = true
+    isIgnitionOn = true
+    isStarting = false
+    stallCooldown = 3.0
+    stallShockTimer = 0.0
+    stallReason = ""
+    local curRpm = (car.rpm and car.rpm > 200.0) and car.rpm or (config.idleRPM or 850.0)
+    coreState.omega_e = curRpm * 0.10472
+    coreState.state = Core.STATE_LOCKED
+    wasEnabled = true
+  end
 
   if dt <= 0.0 or dt > 0.05 then dt = 0.016 end
 
@@ -342,8 +355,8 @@ function script.update(dt)
     stallCooldown = stallCooldown - dt
   end
 
-  -- Condição de estol mecânico: motor ligado, fora de partida e cooldown
-  if config.stallEnabled and isEngineRunning and stallCooldown <= 0.0 and not isStarting then
+  -- Condição de estol mecânico: motor ligado, fora de partida e cooldown, e OBRIGATORIAMENTE ENGRENADO (currentGear ~= 0)
+  if config.stallEnabled and isEngineRunning and stallCooldown <= 0.0 and not isStarting and currentGear ~= 0 then
     local shouldStall = false
     local stallMsg = "MOTOR MORREU POR EXCESSO DE CARGA NA TRANSMISSÃO!"
 
@@ -615,13 +628,8 @@ end
 local selectedTab = 1
 
 function script.windowMain()
-  pcall(function()
-    if ui.windowWidth and (ui.windowWidth() < 300 or ui.windowHeight() < 300) then
-      ui.setWindowSize(vec2(460, 620))
-    end
-  end)
-
   local pt = config.language == "pt"
+  local car = ac.getCar(0)
   
   if config.cockpitShakeEnabled and (cockpitShake.x ~= 0 or cockpitShake.y ~= 0) then
     ui.setCursor(ui.getCursor() + cockpitShake)
@@ -648,6 +656,13 @@ function script.windowMain()
       config.enabled = true
       isEngineRunning = true
       isIgnitionOn = true
+      isStarting = false
+      stallCooldown = 3.0
+      stallShockTimer = 0.0
+      stallReason = ""
+      local curRpm = (car and car.rpm and car.rpm > 200.0) and car.rpm or (config.idleRPM or 850.0)
+      coreState.omega_e = curRpm * 0.10472
+      coreState.state = Core.STATE_LOCKED
     end
   end
   ui.dummy(vec2(0, 4))
@@ -841,6 +856,13 @@ function script.windowHud()
       config.enabled = true
       isEngineRunning = true
       isIgnitionOn = true
+      isStarting = false
+      stallCooldown = 3.0
+      stallShockTimer = 0.0
+      stallReason = ""
+      local curRpm = (car and car.rpm and car.rpm > 200.0) and car.rpm or (config.idleRPM or 850.0)
+      coreState.omega_e = curRpm * 0.10472
+      coreState.state = Core.STATE_LOCKED
     end
     ui.dummy(vec2(0, 4))
     ui.textColored(pt and "⏸ SIMULAÇÃO DESATIVADA" or "⏸ MOD DISABLED", rgbm(0.9, 0.9, 0.9, 1))
