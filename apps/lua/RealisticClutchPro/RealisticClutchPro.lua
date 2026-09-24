@@ -275,11 +275,17 @@ function script.update(dt)
 
   -- 3. Resolução Cinemática e Dinâmica da Transmissão
   local currentGear = car.gear or 0
-  local speedKmh = car.speedKmh or 0.0
-  local speedMag = math.abs(speedKmh)
-  local v_veh = speedKmh / 3.6 -- m/s
+  local speedKmh = math.abs(car.speedKmh or 0.0)
+  
+  -- Velocidade longitudinal com sinal real no referencial do carro (+ frente, - ré)
+  local signedSpeedMs = (car.localVelocity and car.localVelocity.z)
+                        or (car.velocity and car.look and car.velocity:dot(car.look))
+                        or (speedKmh / 3.6 * ((currentGear < 0) and -1.0 or 1.0))
+  local signedSpeedKmh = signedSpeedMs * 3.6
+  local speedMag = math.abs(signedSpeedKmh)
+  local v_veh = signedSpeedMs -- Velocidade escalar com direção correta para equações do trem de força
   local actualRPM = car.rpm or 0.0
-  local acClutch = clamp(car.clutch or 1.0, 0.0, 1.0) -- In AC: 0.0 = pressed floor, 1.0 = released
+  local acClutch = clamp(car.clutch or 1.0, 0.0, 1.0) -- No AC: 0.0 = pedal no fundo, 1.0 = solto
   local rawGas = clamp(car.gas or 0.0, 0.0, 1.0)
   local rawBrake = clamp(car.brake or 0.0, 0.0, 1.0)
   local rawHandbrake = clamp(car.handbrake or 0.0, 0.0, 1.0)
@@ -291,9 +297,9 @@ function script.update(dt)
   local pitchDeg = math.deg(pitchRad)
 
   -- Sincronização Cinemática do Eixo Primário (Input Shaft) com as rodas
+  -- Em ré, as engrenagens intermediárias invertem o sentido de rotação, mantendo o eixo primário sempre girando no sentido de avanço do motor!
   local omega_t_road = Drivetrain.calculateKinematicInputShaftSpeed(dtCfg, currentGear, v_veh)
   if omega_t_road ~= nil then
-    -- Em marcha engrenada, o eixo primário segue a velocidade cinemática das rodas
     coreState.omega_t = omega_t_road
   elseif currentGear == 0 and acClutch < 0.20 then
     -- No neutro com embreagem pisada, o primário desacelera suavemente por atrito viscoso
@@ -341,37 +347,40 @@ function script.update(dt)
     local shouldStall = false
     local stallMsg = "MOTOR MORREU POR EXCESSO DE CARGA NA TRANSMISSÃO!"
 
-    -- Caso A: Rotação simulada caiu abaixo de stallRPM
-    if simulatedRPM < config.stallRPM or coreState.omega_e < (config.stallRPM * 0.10472) then
+    -- Caso A: Rotação simulada caiu abaixo de stallRPM enquanto em marcha baixa ou soltando embreagem
+    if (simulatedRPM < config.stallRPM or coreState.omega_e < (config.stallRPM * 0.10472)) and (speedMag < 6.0 or acClutch > 0.65) then
       shouldStall = true
-      if acClutch > 0.60 and speedMag < 4.0 and rawGas < 0.15 then
+      if acClutch > 0.65 and speedMag < 3.5 and rawGas < 0.15 then
         stallMsg = "SOLTOU A EMBREAGEM COM CARRO PARADO SEM ACELERAR!"
-      elseif acClutch > 0.40 and (rawBrake > 0.15 or rawHandbrake > 0.15) and speedMag < 5.0 then
+      elseif acClutch > 0.50 and (rawBrake > 0.20 or rawHandbrake > 0.20) and speedMag < 4.0 then
         stallMsg = "FREIOU ATÉ PARAR EM MARCHA SEM PISAR NA EMBREAGEM!"
-      elseif math.abs(currentGear) > 1 and speedMag < 7.0 then
-        stallMsg = "TENTOU ARRANCAR EM MARCHA MUITO ALTA!"
-      elseif pitchDeg > 2.0 and rawGas < 0.20 then
+      elseif currentGear >= 2 and speedMag < 5.5 then
+        stallMsg = "TENTOU ARRANCAR EM MARCHA MUITO ALTA (" .. tostring(currentGear) .. "ª MARCHA)!"
+      elseif math.abs(pitchDeg) > 3.0 and rawGas < 0.18 then
         stallMsg = "FALTOU ACELERAÇÃO NA SUBIDA!"
       end
     end
 
-    -- Caso B: Carro quase parado em marcha sem embreagem (soltou de vez no semáforo ou freou)
-    if not shouldStall and currentGear ~= 0 and acClutch > 0.45 and speedMag < 3.0 and rawGas < 0.12 then
+    -- Caso B: Carro quase parado em marcha soltando a embreagem quase toda sem acelerar (ou freando até o fim)
+    if not shouldStall and currentGear ~= 0 and acClutch > 0.65 and speedMag < 2.8 and rawGas < 0.10 then
       shouldStall = true
-      stallMsg = (rawBrake > 0.10) and "FREIOU ATÉ PARAR EM MARCHA SEM PISAR NA EMBREAGEM!" 
-                                   or "SOLTOU A EMBREAGEM COM CARRO PARADO SEM ACELERAR!"
+      stallMsg = (rawBrake > 0.15 or rawHandbrake > 0.15) and "FREIOU ATÉ PARAR EM MARCHA SEM PISAR NA EMBREAGEM!" 
+                                                          or "SOLTOU A EMBREAGEM COM CARRO PARADO SEM ACELERAR!"
     end
 
-    -- Caso C: Tentativa de arrancada em marcha alta em velocidade baixa sem aceleração alta
-    if not shouldStall and math.abs(currentGear) >= 2 and speedMag < 5.0 and acClutch > 0.40 and rawGas < 0.35 then
+    -- Caso C: Tentativa de arrancada em marcha alta (2ª marcha ou superior para frente)
+    if not shouldStall and currentGear >= 2 and speedMag < 4.5 and acClutch > 0.62 and rawGas < 0.25 then
       shouldStall = true
       stallMsg = "TENTOU ARRANCAR EM MARCHA MUITO ALTA (" .. tostring(currentGear) .. "ª MARCHA)!"
     end
 
-    -- Caso D: Subida íngreme sem acelerador suficiente
-    if not shouldStall and pitchDeg > 2.5 and speedMag < 4.0 and acClutch > 0.45 and rawGas < 0.20 then
+    -- Caso D: Subida íngreme: somente morre se soltar a embreagem demais (> 68%) sem acelerar o suficiente
+    if not shouldStall and currentGear > 0 and pitchDeg > 3.0 and speedMag < 2.5 and acClutch > 0.68 and rawGas < 0.15 then
       shouldStall = true
       stallMsg = "FALTOU ACELERAÇÃO NA SUBIDA!"
+    elseif not shouldStall and currentGear < 0 and pitchDeg < -3.0 and speedMag < 2.5 and acClutch > 0.68 and rawGas < 0.15 then
+      shouldStall = true
+      stallMsg = "FALTOU ACELERAÇÃO NA SUBIDA DE RÉ!"
     end
 
     if shouldStall then
@@ -403,8 +412,12 @@ function script.update(dt)
   -- 6. Injeção Direta em Baixo Nível no CSP (C-Physics Engine Hooks)
   if ac.overrideSpecificValue and ac.CarPhysicsValueID then
     pcall(function()
+      local effCoupling = coreState.coupling_ratio
+      if acClutch > 0.95 then
+        effCoupling = 1.0
+      end
       -- Sobrescreve a embreagem física do C++ com a taxa calculada do nosso modelo de Coulomb
-      ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainClutchOverride, coreState.coupling_ratio)
+      ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainClutchOverride, effCoupling)
       -- Desativa o sincronizador simplificado da Kunos para permitir deslizamento suave contínuo
       ac.overrideSpecificValue(ac.CarPhysicsValueID.DrivetrainOpenThreshold, 0.0)
       
@@ -489,25 +502,31 @@ function script.update(dt)
       -- Isso garante aceleração 100% direta, linear e sem acelerador fantasma ou travado.
       activeControls.gas = 0.0
 
-      -- CREEP DE MARCHA LENTA NO PLANO (Arrancada suave ao soltar a embreagem sem acelerar)
+      -- CREEP DE MARCHA LENTA REALISTA (Arrancada suave progressiva na 1ª marcha / ré sem acelerar)
       local isCreepEligible = (currentGear == 1 or currentGear == -1)
-                              and (rawBrake < 0.08 and rawHandbrake < 0.08)
-                              and (rawGas < 0.05)
-                              and (acClutch > 0.35 or coreState.coupling_ratio > 0.08)
-                              and (speedMag < 8.5)
-                              and (math.abs(pitchDeg) < 2.5)
+                              and (rawBrake < 0.06 and rawHandbrake < 0.06)
+                              and (rawGas < 0.06)
+                              and (acClutch > 0.40 or coreState.coupling_ratio > 0.10)
+                              and (speedMag < 6.8)
+                              and (math.abs(pitchDeg) < 8.0)
 
       if isCreepEligible then
         local creepDir = (currentGear < 0) and -1.0 or 1.0
-        -- Governador de velocidade: empurra suavemente até atingir a velocidade de marcha lenta (~7.2 - 7.6 km/h)
-        local speedGovernor = clamp((8.2 - speedMag) / 8.2, 0.0, 1.0)
-        local engagementFactor = clamp(coreState.coupling_ratio * 1.5, 0.15, 1.0)
+        -- Governador quadrático suave: aceleração diminui naturalmente conforme se aproxima da velocidade de marcha lenta (~6.2 km/h)
+        local speedErr = math.max(0.0, (6.5 - speedMag) / 6.5)
+        local speedGovernor = speedErr * speedErr
+        -- Modulação progressiva pela taxa de acoplamento real da embreagem
+        local engagementFactor = clamp((coreState.coupling_ratio - 0.10) / 0.70, 0.0, 1.0)
 
-        -- Força tratória das rodas motrizes (Newton: ~1600 - 2000 N gerados pelo acoplamento mecânico)
-        local creepTractiveForce = creepDir * carMass * 1.65 * engagementFactor * speedGovernor * (config.creepTorqueMultiplier or 1.0)
-        pcall(function()
-          physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, creepTractiveForce), true)
-        end)
+        -- Aceleração realista de marcha lenta: ~0.38 m/s² (~450 - 500 N para carro de 1250kg)
+        local baseTractiveAccel = 0.38
+        local creepTractiveForce = creepDir * carMass * baseTractiveAccel * engagementFactor * speedGovernor * (config.creepTorqueMultiplier or 1.0)
+        
+        if math.abs(creepTractiveForce) > 1.0 then
+          pcall(function()
+            physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, creepTractiveForce), true)
+          end)
+        end
       end
 
       -- TREPIDAÇÃO FÍSICA E VISUAL NO PONTO DE FRICÇÃO (Chassis & Cockpit Camera Shudder)
@@ -537,8 +556,10 @@ function script.update(dt)
       end
 
       -- QUEDA AUDÍVEL DE ROTAÇÃO NO PONTO DE EMBREAGEM (ENGINE BOG / SOM PESADO)
-      if rawGas < 0.08 and currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and coreState.coupling_ratio > 0.12 then
-        local droopRpm = clamp(coreState.coupling_ratio * 130.0, 0.0, 140.0)
+      -- ATENÇÃO: Somente em velocidade quase nula (< 3.5 km/h) ao soltar a embreagem sem acelerador suficiente!
+      -- NUNCA chamar physics.setEngineRPM em velocidade de cruzeiro (> 3.5 km/h) pois derrubaria a rotação causando freio-motor violento instantâneo!
+      if rawGas < 0.08 and currentGear ~= 0 and speedMag < 3.5 and coreState.state == Core.STATE_SLIPPING and coreState.coupling_ratio > 0.15 and actualRPM < (config.idleRPM + 250.0) then
+        local droopRpm = clamp(coreState.coupling_ratio * 120.0, 0.0, 130.0)
         local loadedRpm = math.max((config.stallRPM or 540.0) + 35.0, (config.idleRPM or 850.0) - droopRpm)
         pcall(function()
           physics.setEngineRPM(0, loadedRpm)
@@ -546,19 +567,9 @@ function script.update(dt)
       end
     end
 
-    -- FÍSICA ATIVA DE GRAVIDADE NA LADEIRA (Desce livre no neutro / embreagem pisada)
-    local isBraking = (rawBrake > 0.04) or (rawHandbrake > 0.04)
-    local isFreewheeling = (currentGear == 0) or (acClutch < 0.25) or (coreState.coupling_ratio < 0.15)
-    
+    -- FÍSICA ATIVA DE MANUTENÇÃO DE DESPERTAR NA LADEIRA (Desce livre naturalmente pela gravidade real do AC)
     if math.abs(pitchDeg) > 0.8 then
       pcall(function() physics.awakeCar(0) end)
-
-      if not isBraking and isFreewheeling then
-        local rollForce = -math.sin(pitchRad) * carMass * 9.81 * 0.40
-        pcall(function()
-          physics.addForce(0, vec3(0, 0, 0), true, vec3(0, 0, rollForce), true)
-        end)
-      end
     end
   end
 

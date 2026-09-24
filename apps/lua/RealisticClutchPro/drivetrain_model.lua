@@ -72,8 +72,11 @@ function Drivetrain.calculateKinematicInputShaftSpeed(cfg, gear, v_veh)
   if gear == 0 or math.abs(ratio) < 1e-4 then
     return nil -- Neutral: input shaft is decoupled from road wheels
   end
-  local i_tot = ratio * cfg.final_drive
-  local omega_wheel = (cfg.wheel_radius > 0.0) and (v_veh / cfg.wheel_radius) or 0.0
+  local u_gear = (gear > 0) and 1.0 or ((gear == -1) and -1.0 or 0.0)
+  local abs_ratio = math.abs(ratio)
+  local i_tot = abs_ratio * cfg.final_drive
+  local v_drive = v_veh * u_gear
+  local omega_wheel = (cfg.wheel_radius > 0.0) and (v_drive / cfg.wheel_radius) or 0.0
   return omega_wheel * i_tot
 end
 
@@ -87,27 +90,26 @@ function Drivetrain.calculateRoadLoad(cfg, gear, v_veh, pitchRad, brakeInput, ha
     return 0.06 * omega_t
   end
   
-  local i_tot = ratio * cfg.final_drive
-  local sgn_v = (v_veh > 0.02) and 1.0 or ((v_veh < -0.02) and -1.0 or 0.0)
-  if sgn_v == 0.0 then
-    -- At standstill, rolling resistance and brakes oppose transmission drive direction
-    sgn_v = (ratio >= 0.0) and 1.0 or -1.0
-  end
+  local u_gear = (gear > 0) and 1.0 or ((gear == -1) and -1.0 or 0.0)
+  local abs_ratio = math.abs(ratio)
+  local i_tot = abs_ratio * cfg.final_drive
+  local v_drive = v_veh * u_gear
+  local sgn_drive = (v_drive > 0.02) and 1.0 or ((v_drive < -0.02) and -1.0 or 1.0)
   
-  -- 1. Aerodynamic drag
-  local F_aero = 0.5 * 1.225 * cfg.cd_area * (v_veh * v_veh) * sgn_v
+  -- 1. Aerodynamic drag (opposes drive direction)
+  local F_aero = 0.5 * 1.225 * cfg.cd_area * (v_veh * v_veh) * sgn_drive
   
-  -- 2. Rolling resistance
+  -- 2. Rolling resistance (opposes drive direction)
   local cosPitch = math.cos(pitchRad)
-  local F_roll = m * 9.81 * cosPitch * cfg.c_rr * sgn_v
+  local F_roll = m * 9.81 * cosPitch * cfg.c_rr * sgn_drive
   
-  -- 3. Gravitational incline force (+ Uphill resists, - Downhill assists)
+  -- 3. Gravitational incline force (+ Opposes drive uphill, - Assists drive downhill)
   local sinPitch = math.sin(pitchRad)
-  local F_grade = m * 9.81 * sinPitch
+  local F_grade = m * 9.81 * sinPitch * u_gear
   
-  -- 4. Brakes (Wheel friction pads)
+  -- 4. Brakes (Wheel friction pads oppose drive direction)
   local brakeCombined = clamp((brakeInput or 0.0) + (handbrakeInput or 0.0), 0.0, 1.0)
-  local F_brakes = brakeCombined * cfg.max_brake_force * sgn_v
+  local F_brakes = brakeCombined * cfg.max_brake_force * sgn_drive
   
   local F_total = F_aero + F_roll + F_grade + F_brakes
   
