@@ -168,6 +168,7 @@ function Core.step(cfg, state, I_e, I_t, tau_ext_e, tau_load, pedalTravel, dt)
   if dt > 0.05 then dt = 0.003 end -- Protection against simulation pause hitches
   
   local F_normal = Core.calculateClampingForce(cfg, pedalTravel)
+  local clamp_ratio = (cfg.F_normal_max > 0.0) and clamp(F_normal / cfg.F_normal_max, 0.0, 1.0) or 0.0
   local d_omega = state.omega_e - state.omega_t
   state.slip_velocity = d_omega
   local mu_dyn, mu_fade = Core.calculateMu(cfg, state, d_omega)
@@ -207,7 +208,7 @@ function Core.step(cfg, state, I_e, I_t, tau_ext_e, tau_load, pedalTravel, dt)
       state.omega_e = math.max(0.0, state.omega_e + ((tau_ext_e - state.tau_clutch) / I_e) * dt)
       state.omega_t = state.omega_t + ((state.tau_clutch - tau_load) / I_t) * dt
       state.slip_power = math.abs(state.tau_clutch * (state.omega_e - state.omega_t))
-      state.coupling_ratio = (tau_cap_static > 1e-3) and clamp(math.abs(state.tau_clutch) / tau_cap_static, 0.0, 1.0) or 0.0
+      state.coupling_ratio = clamp_ratio
     end
     
   -- ============================================================================
@@ -243,7 +244,7 @@ function Core.step(cfg, state, I_e, I_t, tau_ext_e, tau_load, pedalTravel, dt)
         state.omega_t = omega_t_trial
         state.tau_clutch = tau_dyn
         state.slip_power = math.abs(state.tau_clutch * (state.omega_e - state.omega_t))
-        state.coupling_ratio = (tau_cap_static > 1e-3) and clamp(math.abs(state.tau_clutch) / tau_cap_static, 0.0, 1.0) or 0.0
+        state.coupling_ratio = clamp_ratio
       end
     else
       -- Regular continuous slipping progression
@@ -251,7 +252,7 @@ function Core.step(cfg, state, I_e, I_t, tau_ext_e, tau_load, pedalTravel, dt)
       state.omega_t = omega_t_trial
       state.tau_clutch = tau_dyn
       state.slip_power = math.abs(state.tau_clutch * (state.omega_e - state.omega_t))
-      state.coupling_ratio = (tau_cap_static > 1e-3) and clamp(math.abs(state.tau_clutch) / tau_cap_static, 0.0, 1.0) or 0.0
+      state.coupling_ratio = clamp_ratio
     end
   end
   

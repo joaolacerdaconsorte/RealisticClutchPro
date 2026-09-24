@@ -139,36 +139,52 @@ end
 -- ==============================================================================
 -- ASSISTENTE VISUAL DE PONTO DE EMBREAGEM (TREINO AUTOESCOLA)
 -- ==============================================================================
+-- ASSISTENTE VISUAL DE PONTO DE EMBREAGEM (TREINO AUTOESCOLA)
+-- ==============================================================================
 function UI.drawBitePointRadar(currentPedal, biteCenter, biteWidth, couplingRatio, isSlipping, isStalled, isNearStall, pt)
   local p = ui.getCursor()
   local w = ui.availableSpaceX()
-  local h = 52
+  local h = 54
   
-  -- Card background
+  local startBite = clamp(biteCenter - (biteWidth * 0.5), 0.10, 0.80)
+  local endBite = clamp(biteCenter + (biteWidth * 0.5), startBite + 0.08, 0.95)
+  local ped = clamp(currentPedal, 0.0, 1.0)
+  local inBite = (ped >= startBite and ped <= endBite)
+
+  -- Vibração visual dinâmica do widget no ponto de fricção
+  local jitter = vec2(0, 0)
+  if inBite and isSlipping then
+    local now = os.clock()
+    local jX = math.sin(now * 80.0) * 3.5 + (math.random() - 0.5) * 2.0
+    local jY = math.cos(now * 70.0) * 2.5 + (math.random() - 0.5) * 1.5
+    jitter = vec2(jX, jY)
+  elseif isNearStall then
+    local now = os.clock()
+    jitter = vec2((math.random() - 0.5) * 5.0, (math.random() - 0.5) * 4.0)
+  end
+
+  local pJitter = p + jitter
+
+  -- Card background com pulsação
   local bgCol = isStalled and rgbm(0.25, 0.08, 0.08, 0.92) or (isNearStall and rgbm(0.28, 0.16, 0.04, 0.92) or rgbm(0.09, 0.11, 0.15, 0.94))
-  local borderCol = isStalled and rgbm(0.9, 0.2, 0.2, 0.8) or (isNearStall and rgbm(1.0, 0.6, 0.1, 0.9) or rgbm(0.25, 0.32, 0.42, 0.7))
-  ui.drawRectFilled(p, p + vec2(w, h), bgCol, 5)
-  ui.drawRect(p, p + vec2(w, h), borderCol, 5, 1)
+  local borderCol = isStalled and rgbm(0.9, 0.2, 0.2, 0.8) or (isNearStall and rgbm(1.0, 0.6, 0.1, 0.9) or (inBite and rgbm(0.2, 0.95, 0.4, 0.9) or rgbm(0.25, 0.32, 0.42, 0.7)))
+  ui.drawRectFilled(pJitter, pJitter + vec2(w, h), bgCol, 5)
+  ui.drawRect(pJitter, pJitter + vec2(w, h), borderCol, 5, (inBite or isNearStall) and 2 or 1)
 
   if isStalled then
-    ui.setCursor(p + vec2(8, 8))
+    ui.setCursor(pJitter + vec2(8, 8))
     ui.textColored(pt and "❌ MOTOR MORREU / AFOGOU!" or "❌ ENGINE STALLED!", rgbm(1.0, 0.3, 0.3, 1))
-    ui.setCursor(p + vec2(8, 28))
+    ui.setCursor(pJitter + vec2(8, 28))
     ui.textColored(pt and "Pise na embreagem e aperte o Botão 1 (X) para ligar" or "Press clutch & Button 1 (X) to restart", rgbm(0.85, 0.85, 0.85, 1))
     ui.setCursor(p + vec2(0, h + 4))
     ui.dummy(vec2(w, 0))
     return
   end
 
-  local startBite = clamp(biteCenter - (biteWidth * 0.5), 0.10, 0.80)
-  local endBite = clamp(biteCenter + (biteWidth * 0.5), startBite + 0.08, 0.95)
-  local ped = clamp(currentPedal, 0.0, 1.0)
-  local inBite = (ped >= startBite and ped <= endBite)
-
   -- Header text & Status
-  ui.setCursor(p + vec2(8, 5))
+  ui.setCursor(pJitter + vec2(8, 5))
   if isNearStall then
-    ui.textColored(pt and "⚠ QUASE MORRENDO! ACELERE OU PISE!" or "⚠ NEAR STALL! GAS OR PUSH CLUTCH!", rgbm(1.0, 0.65, 0.1, 1))
+    ui.textColored(pt and "⚡ TREPIDANDO FORTE: ACELERE OU PISE!" or "⚡ VIOLENT SHUDDER: GAS OR CLUTCH!", rgbm(1.0, 0.65, 0.1, 1))
   elseif inBite then
     ui.textColored(pt and "★ PONTO DE FRICÇÃO: SEGURE O PEDAL AQUI! ★" or "★ BITE POINT: HOLD PEDAL HERE! ★", rgbm(0.2, 1.0, 0.35, 1))
   elseif ped < startBite then
@@ -178,9 +194,9 @@ function UI.drawBitePointRadar(currentPedal, biteCenter, biteWidth, couplingRati
   end
 
   -- Horizontal Pedal & Bite Zone Track
-  local trackY = p.y + 26
+  local trackY = pJitter.y + 28
   local trackH = 16
-  local trackStart = p.x + 8
+  local trackStart = pJitter.x + 8
   local trackW = w - 16
 
   -- Base track
@@ -189,21 +205,21 @@ function UI.drawBitePointRadar(currentPedal, biteCenter, biteWidth, couplingRati
   -- Target Bite Zone Box
   local bzX1 = trackStart + (startBite * trackW)
   local bzX2 = trackStart + (endBite * trackW)
-  local bzCol = inBite and rgbm(0.2, 0.9, 0.35, 0.50) or rgbm(0.9, 0.6, 0.1, 0.30)
-  local bzBorder = inBite and rgbm(0.3, 1.0, 0.45, 0.95) or rgbm(0.95, 0.65, 0.15, 0.75)
+  local bzCol = inBite and rgbm(0.2, 0.9, 0.35, 0.55) or rgbm(0.9, 0.6, 0.1, 0.30)
+  local bzBorder = inBite and rgbm(0.3, 1.0, 0.45, 1.0) or rgbm(0.95, 0.65, 0.15, 0.75)
   ui.drawRectFilled(vec2(bzX1, trackY), vec2(bzX2, trackY + trackH), bzCol, 3)
-  ui.drawRect(vec2(bzX1, trackY), vec2(bzX2, trackY + trackH), bzBorder, 3, 1.5)
+  ui.drawRect(vec2(bzX1, trackY), vec2(bzX2, trackY + trackH), bzBorder, 3, inBite and 2.5 or 1.5)
 
   -- Center Bite Target Line
   local bzCenter = trackStart + (biteCenter * trackW)
-  ui.drawLine(vec2(bzCenter, trackY - 2), vec2(bzCenter, trackY + trackH + 2), rgbm(1, 1, 1, 0.8), 1.5)
+  ui.drawLine(vec2(bzCenter, trackY - 2), vec2(bzCenter, trackY + trackH + 2), rgbm(1, 1, 1, 0.9), 2)
 
   -- Live Foot Position Indicator Cursor
   local curX = trackStart + (ped * trackW)
   local cursorCol = inBite and rgbm(0.3, 1.0, 0.4, 1.0) or rgbm(1.0, 1.0, 1.0, 0.9)
-  ui.drawLine(vec2(curX, trackY - 3), vec2(curX, trackY + trackH + 3), cursorCol, 2.5)
-  ui.drawCircleFilled(vec2(curX, trackY + trackH * 0.5), 5.0, cursorCol)
-  ui.drawCircle(vec2(curX, trackY + trackH * 0.5), 6.0, rgbm(0, 0, 0, 0.7), 12, 1)
+  ui.drawLine(vec2(curX, trackY - 4), vec2(curX, trackY + trackH + 4), cursorCol, 3.0)
+  ui.drawCircleFilled(vec2(curX, trackY + trackH * 0.5), 6.0, cursorCol)
+  ui.drawCircle(vec2(curX, trackY + trackH * 0.5), 7.5, rgbm(0, 0, 0, 0.8), 12, 1.5)
 
   ui.setCursor(p + vec2(0, h + 4))
   ui.dummy(vec2(w, 0))

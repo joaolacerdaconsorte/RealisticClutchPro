@@ -530,19 +530,24 @@ function script.update(dt)
       end
 
       -- TREPIDAÇÃO FÍSICA E VISUAL NO PONTO DE FRICÇÃO (Chassis & Cockpit Camera Shudder)
-      if currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and speedMag < 18.0 and coreState.coupling_ratio > 0.08 then
-        local biteZone = 1.0 - math.min(1.0, math.abs(coreState.coupling_ratio - 0.45) / 0.35)
+      if currentGear ~= 0 and coreState.state == Core.STATE_SLIPPING and speedMag < 18.0 and coreState.coupling_ratio > 0.06 then
+        local biteCenter = config.clutchBiteCenter or 0.45
+        local dist = math.abs(coreState.coupling_ratio - biteCenter) / 0.28
+        local biteZone = clamp(1.0 - dist, 0.0, 1.0)
         local smoothBite = biteZone * biteZone * (3.0 - 2.0 * biteZone)
-        local shudderGain = clamp(config.shudderIntensity or 1.45, 0.5, 2.5)
+        local shudderGain = clamp(config.shudderIntensity or 1.65, 0.5, 3.0)
 
-        -- Frequência natural de vibração de coxins do motor / subchassi (15.2 Hz)
-        local biteFreq = 15.2
+        -- Frequência natural de vibração de coxins do motor / subchassi (12.0 Hz)
+        local biteFreq = 12.0
         local oscY = math.sin(chatterTimer * math.pi * 2.0 * biteFreq)
-        local oscZ = math.sin(chatterTimer * math.pi * 2.0 * biteFreq + 0.75) * 0.5
+        local oscZ = math.sin(chatterTimer * math.pi * 2.0 * biteFreq + 0.75) * 0.4
+        local oscX = math.cos(chatterTimer * math.pi * 2.0 * biteFreq) * 0.35
 
-        -- Força de suspensão (350 N - 550 N): excita os amortecedores e molas, fazendo a tela tremer visivelmente!
-        local forceY = oscY * carMass * 0.45 * (0.35 + 0.65 * smoothBite) * shudderGain
-        local forceZ = oscZ * carMass * 0.30 * (0.35 + 0.65 * smoothBite) * shudderGain
+        -- Aplicação no COFRE DO MOTOR / COXIM DIANTEIRO (z = 1.25m à frente do CG):
+        -- Aplica torque de arfagem (pitch) e rolamento (roll) que movimenta de verdade a suspensão dianteira e a visão do cockpit/capô!
+        local forceY = oscY * carMass * 2.2 * (0.35 + 0.65 * smoothBite) * shudderGain
+        local forceZ = oscZ * carMass * 0.8 * (0.35 + 0.65 * smoothBite) * shudderGain
+        local forceX = oscX * carMass * 0.5 * (0.35 + 0.65 * smoothBite) * shudderGain
 
         -- Se estiver em subida, agacha a traseira conforme traciona (controle de embreagem na rampa)
         if math.abs(pitchDeg) > 1.2 then
@@ -551,7 +556,8 @@ function script.update(dt)
         end
 
         pcall(function()
-          physics.addForce(0, vec3(0, 0, 0), true, vec3(0, forceY, forceZ), true)
+          -- Posição local vec3(0.12, 0.25, 1.25): cofre do motor / suspensão dianteira
+          physics.addForce(0, vec3(0.12, 0.25, 1.25), true, vec3(forceX, forceY, forceZ), true)
         end)
       end
 
@@ -577,11 +583,16 @@ function script.update(dt)
   if stallShockTimer > 0.0 then
     stallShockTimer = stallShockTimer - dt
     local shockFrac = stallShockTimer / 0.45
-    cockpitShake = vec2((math.random() - 0.5) * 14.0 * shockFrac, -shockFrac * 10.0)
-  elseif coreState.state == Core.STATE_SLIPPING and currentGear ~= 0 and coreState.coupling_ratio > 0.15 and speedMag < 16.0 then
-    local shakeWave = math.sin(chatterTimer * math.pi * 48.0)
-    local shakeAmp = coreState.coupling_ratio * 4.0 * (config.shudderIntensity or 1.35)
-    cockpitShake = vec2(shakeWave * shakeAmp, -math.abs(shakeWave * shakeAmp * 0.7))
+    cockpitShake = vec2((math.random() - 0.5) * 22.0 * shockFrac, -shockFrac * 14.0)
+  elseif coreState.state == Core.STATE_SLIPPING and currentGear ~= 0 and coreState.coupling_ratio > 0.08 and speedMag < 18.0 then
+    local biteCenter = config.clutchBiteCenter or 0.45
+    local biteProx = clamp(1.0 - (math.abs(coreState.coupling_ratio - biteCenter) / 0.28), 0.0, 1.0)
+    local smoothProx = biteProx * biteProx * (3.0 - 2.0 * biteProx)
+    
+    local shakeWave = math.sin(chatterTimer * math.pi * 26.0)
+    local shakeJitter = (math.random() - 0.5) * 2.5
+    local shakeAmp = (2.5 + smoothProx * 7.5) * (config.shudderIntensity or 1.65)
+    cockpitShake = vec2(shakeWave * shakeAmp + shakeJitter, -math.abs(shakeWave * shakeAmp * 0.75))
   else
     cockpitShake = vec2(0, 0)
   end
@@ -807,6 +818,10 @@ end
 function script.windowHud()
   local pt = config.language == "pt"
   local car = ac.getCar(0)
+
+  if config.cockpitShakeEnabled and (cockpitShake.x ~= 0 or cockpitShake.y ~= 0) then
+    ui.setCursor(ui.getCursor() + cockpitShake)
+  end
 
   -- Botão Rápido Liga/Desliga no HUD (Permite desativar sem abrir o menu principal)
   local btnW = ui.availableSpaceX()
